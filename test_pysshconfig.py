@@ -15,83 +15,54 @@
 #    You should have received a copy of the GNU Lesser General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pysshconfig
+from pysshconfig import HostBlock, HostList, InvalidKeyword, KeywordSet, ParserError, dump, dumps, load, loads
+from io import StringIO
 import textwrap
 import unittest
 
 
 class TestMatchHost(unittest.TestCase):
     def test_positive_match(self):
-        self.assertTrue(pysshconfig.SshConfig.match_host('myhost', ('onehost', 'myhost')))
+        self.assertTrue(HostList(['onehost', 'myhost']).match('myhost'))
 
     def test_positive_match_pattern(self):
-        self.assertTrue(pysshconfig.SshConfig.match_host('myhost', ('onehost' '*host')))
+        self.assertTrue(HostList(['onehost', '*host']).match('myhost'))
 
     def test_negative_match_over_positive_match(self):
-        self.assertFalse(pysshconfig.SshConfig.match_host('myhost', ('*host', '!*host')))
+        self.assertFalse(HostList(['*host', '!*host']).match('myhost'))
 
     def test_no_match(self):
-        self.assertFalse(pysshconfig.SshConfig.match_host('myhost', ('onehost', 'somehost')))
+        self.assertFalse(HostList(['onehost', 'somehost']).match('myhost'))
 
     def test_match_all(self):
-        self.assertTrue(pysshconfig.SshConfig.match_host('myhost', ('*')))
+        self.assertTrue(HostList(['*']).match('myhost'))
 
     def test_empty_list(self):
-        self.assertFalse(pysshconfig.SshConfig.match_host('myhost', ()))
+        self.assertFalse(HostList([]).match('myhost'))
 
     def test_empty_host(self):
-        with self.assertRaises(ValueError):
-            self.assertFalse(pysshconfig.SshConfig.match_host('', ('*')))
+        self.assertFalse(HostList(['*']).match(''))
 
 
 class TestKeywordSet(unittest.TestCase):
-    def setUp(self):
-        self.init_l = [
-            ('one', 1),
-            ('two', 2),
-            ('three', 3),
-        ]
-        self.init_d = dict(self.init_l)
+    def test_set_bad_key(self):
+        kw = KeywordSet()
+        with self.assertRaises(InvalidKeyword):
+            kw['invalidkey'] = 'data'
 
-    def test_empty(self):
-        kw = pysshconfig.KeywordSet()
-        self.assertEqual({}, kw)
+    def test_case_insensitve(self):
+        value = 'alice'
+        kw = KeywordSet({'user': value})
+        for key in ['User', 'USER', 'user']:
+            self.assertIn(key, kw)
+            self.assertEqual(value, kw[key])
 
-    def test_init_from_iterable(self):
-        kw = pysshconfig.KeywordSet(self.init_l)
-        self.assertEqual(self.init_d, kw)
-
-    def test_init_from_mapping(self):
-        kw = pysshconfig.KeywordSet(self.init_d)
-        self.assertEqual(self.init_d, kw)
-
-    def test_init_from_keyword_args(self):
-        dk = dict(**self.init_d)
-        kw = pysshconfig.KeywordSet(**self.init_d)
-        self.assertEqual(dk, kw)
-
-    def test_contains_set_and_get_item(self):
-        kw = pysshconfig.KeywordSet([('User', 'a')])
-        self.assertIn('User', kw)
-        self.assertIn('user', kw)
-        self.assertIn('USER', kw)
-        self.assertEqual('a', kw['User'])
-        self.assertEqual('a', kw['user'])
-        self.assertEqual('a', kw['USER'])
-
-    def test_update(self):
-        kw1 = pysshconfig.KeywordSet({
-            'User': 'a',
-            'HashKnownHosts': 'yes',
-        })
-        kw2 = pysshconfig.KeywordSet({
-            'User': 'b',
-            'ForwardAgent': 'yes',
-        })
-        kw1.update(kw2)
-        self.assertEqual('a', kw1['User'])
-        self.assertEqual('yes', kw1['HashKnownHosts'])
-        self.assertEqual('yes', kw1['ForwardAgent'])
+    def test_cannot_have_host_and_match_in_keywordset(self):
+        kw = KeywordSet()
+        with self.assertRaises(InvalidKeyword):
+            kw['Host'] = 'myhost.org'
+        with self.assertRaises(InvalidKeyword):
+            kw['Match'] = 'host myhost.org'
 
 
 class TestSshParser(unittest.TestCase):
@@ -100,14 +71,40 @@ class TestSshParser(unittest.TestCase):
         Host myhost.com
             PreferredAuthentications publickey
             User myuser
-            ForwardAgent no''')
-        ssh_config = pysshconfig.loads(config)
-        kw = ssh_config.get('myhost.com')
+            ForwardAgent no
+        ''')
+        ssh_config = loads(config)
+        kw = ssh_config.get_config_for_host('myhost.com')
+
         self.assertEqual('publickey', kw['PreferredAuthentications'])
         self.assertEqual('myuser', kw['User'])
         self.assertEqual('no', kw['ForwardAgent'])
 
-    def test_parse_multiple_hosts(self):
+    def test_load_equals_loads(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no
+        ''')
+        ssh_config_load = loads(config)
+        ssh_config_loads = load(StringIO(config))
+
+        self.assertEqual(ssh_config_load, ssh_config_loads)
+
+    def test_parse_duplicate_keywords(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no
+            User nobody
+        ''')
+        ssh_config = loads(config)
+        kw = ssh_config.get_config_for_host('myhost.com')
+        self.assertEqual('myuser', kw['User'])
+
+    def test_parse_multiple_hostblocks(self):
         config = textwrap.dedent('''\
         Host myhost.com
             PreferredAuthentications publickey
@@ -115,23 +112,44 @@ class TestSshParser(unittest.TestCase):
             ForwardAgent no
 
         Host *.com
-            HashKnownHosts yes''')
-        ssh_config = pysshconfig.loads(config)
-        kw = ssh_config.get('myhost.com')
+            User nobody
+            HashKnownHosts yes
+        ''')
+        ssh_config = loads(config)
+        kw = ssh_config.get_config_for_host('myhost.com')
         self.assertEqual('publickey', kw['PreferredAuthentications'])
         self.assertEqual('myuser', kw['User'])
         self.assertEqual('no', kw['ForwardAgent'])
         self.assertEqual('yes', kw['HashKnownHosts'])
+        self.assertEqual(2, len(ssh_config.get_matching_hosts('myhost.com')))
+
+    def test_top_keywords_without_hostblock(self):
+        config = textwrap.dedent('''\
+        ForwardX11 no
+
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent yes
+            ForwardX11 yes
+
+        Host *.com
+            User nobody
+            HashKnownHosts yes
+        ''')
+        ssh_config = loads(config)
+        kw = ssh_config.get_config_for_host('myhost.com')
+        self.assertEqual('no', kw['ForwardX11'])
+        self.assertEqual(3, len(ssh_config.get_matching_hosts('myhost.com')))
 
     def test_ignore_comments_and_spaces(self):
         config = textwrap.dedent('''\
         # Host myhost.net
         # user auser
-        
 
         Host myhost.com myhost.org
 
-        #preferredauthentications publickey
+          # some text
         preferredauthentications password
         user myuser
 
@@ -141,9 +159,172 @@ class TestSshParser(unittest.TestCase):
         forwardagent yes
 
         ''')
-        ssh_config = pysshconfig.loads(config)
-        self.assertEqual({'forwardagent': 'yes'}, ssh_config.get('myhost.net'))
-        self.assertEqual('yes', ssh_config.get('myhost.com')['forwardagent'])
+        ssh_config = loads(config)
+
+        self.assertEqual({'ForwardAgent': 'yes'}, ssh_config.get_config_for_host('myhost.net'))
+        self.assertEqual('yes', ssh_config.get_config_for_host('myhost.com')['ForwardAgent'])
+
+    def test_load_and_dump(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no
+
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+        ''')
+        ssh_config = loads(config)
+        self.assertEqual(config, dumps(ssh_config))
+
+    def test_dump_equals_dumps(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no
+
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+        ''')
+        ssh_config = loads(config)
+        fd = StringIO()
+        dump(ssh_config, fd)
+        self.assertEqual(dumps(ssh_config), fd.getvalue())
+
+    def test_append_hostlist(self):
+        expected = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no
+
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+        ''')
+
+        config = textwrap.dedent('''\
+        Host myhost.com
+            PreferredAuthentications publickey
+            User myuser
+            ForwardAgent no''')
+
+        ssh_config = loads(config)
+        ssh_config.append(HostBlock(
+            HostList(["myhost.net", "myhost.org"]),
+            KeywordSet({"User": "bob", "Port": "23"}),
+        ))
+        self.assertEqual(expected, dumps(ssh_config))
+
+
+class TestSshParserErrors(unittest.TestCase):
+    def test_parse_bad_keyword(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            badkeyword no
+        ''')
+        with self.assertRaises(ParserError) as cm:
+            _ = loads(config)
+
+        self.assertEqual("Invalid keyword at line 2: badkeyword", str(cm.exception))
+
+    def test_parse_bad_syntax(self):
+        config = textwrap.dedent('''\
+        Host myhost.com
+            ProxyJump
+        ''')
+        with self.assertRaises(ParserError) as cm:
+            _ = loads(config)
+
+        self.assertEqual("Invalid syntax at line 2: ProxyJump", str(cm.exception))
+
+
+class TestSshParserFormatting(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.Config = textwrap.dedent('''\
+        ConnectTimeout 30
+        Host myhost.com !insecure.com
+        PreferredAuthentications publickey
+        User alice
+         ForwardAgent no
+
+
+
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+        Host *
+        User nouser
+                ForwardX11 no
+
+        ''')
+
+    def test_default_format(self):
+        expected = textwrap.dedent('''\
+        Host *
+            ConnectTimeout 30
+
+        Host myhost.com !insecure.com
+            PreferredAuthentications publickey
+            User alice
+            ForwardAgent no
+
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+
+        Host *
+            User nouser
+            ForwardX11 no
+        ''')
+        config = self.__class__.Config
+        ssh_config = loads(config)
+        self.assertEqual(expected, dumps(ssh_config))
+
+    def test_no_sep_lines(self):
+        expected = textwrap.dedent('''\
+        Host *
+            ConnectTimeout 30
+        Host myhost.com !insecure.com
+            PreferredAuthentications publickey
+            User alice
+            ForwardAgent no
+        Host myhost.net myhost.org
+            User bob
+            Port 23
+        Host *
+            User nouser
+            ForwardX11 no
+        ''')
+        config = self.__class__.Config
+        ssh_config = loads(config)
+        self.assertEqual(expected, dumps(ssh_config, sep_lines=0))
+
+    def test_indent_tabs(self):
+        expected = textwrap.dedent('''\
+        Host *
+        \tConnectTimeout 30
+
+        Host myhost.com !insecure.com
+        \tPreferredAuthentications publickey
+        \tUser alice
+        \tForwardAgent no
+
+        Host myhost.net myhost.org
+        \tUser bob
+        \tPort 23
+
+        Host *
+        \tUser nouser
+        \tForwardX11 no
+        ''')
+        config = self.__class__.Config
+        ssh_config = loads(config)
+        self.assertEqual(expected, dumps(ssh_config, indent='\t'))
 
 
 if __name__ == '__main__':
