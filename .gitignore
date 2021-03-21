@@ -3,3 +3,7 @@
 *.log
 .coverage
 *~
+.tox
+*.egg-info
+build
+dist
