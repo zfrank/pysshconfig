@@ -3,6 +3,8 @@ Extremely simple, pure-python library to read ssh_config files.
 Useful to see what keywords/options are applied to a certain host, just like the
 official ssh client would.
 
+Requires Python >=3.5
+
 ## Example usage
 Let's say your `~/.ssh/config` file looks like this:
 

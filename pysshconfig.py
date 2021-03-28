@@ -16,8 +16,12 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-from __future__ import annotations
-from typing import Dict, Generator, List, NamedTuple, OrderedDict, TextIO, Tuple
+from typing import Dict, Generator, List, NamedTuple, TextIO, Tuple
+try:
+    from typing import OrderedDict
+except ImportError:  # py3.6
+    from collections import OrderedDict
+
 import fnmatch
 import re
 
@@ -130,7 +134,7 @@ def norm_key(k: str) -> str:
     try:
         return KEYWORD_CASE[k.lower()]
     except KeyError:
-        raise InvalidKeyword(f"Keyword {k} is not valid")
+        raise InvalidKeyword("Keyword {} is not valid".format(k))
 
 
 class ParserError(Exception):
@@ -159,7 +163,7 @@ class HostList(List[str]):
         return False
 
 
-class KeywordSet(OrderedDict[str, str]):
+class KeywordSet(OrderedDict):
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             raise TypeError
@@ -172,9 +176,28 @@ class KeywordSet(OrderedDict[str, str]):
         super().__setitem__(norm_key(key), value)
 
 
-class HostBlock(NamedTuple):
-    hosts: HostList
-    keywords: KeywordSet
+HostBlock = NamedTuple('HostBlock', [('hosts', HostList), ('keywords', KeywordSet)])
+
+
+class SshConfig(List[HostBlock]):
+    def get_matching_hosts(self, hostname: str) -> List[HostBlock]:
+        '''
+        Return a list of all HostBlock objects that match hostname.
+        '''
+        return [hb for hb in self if hb.hosts.match(hostname)]
+
+    def get_config_for_host(self, hostname: str) -> Dict[str, str]:
+        '''
+        Return all the configuration keywords that apply to hostname.
+        '''
+        result = KeywordSet()
+        for hostlist, keywords in self:
+            if not hostlist.match(hostname):
+                continue
+            for k, v in keywords.items():
+                if k not in result:
+                    result[k] = v
+        return result
 
 
 class SshParser:
@@ -183,7 +206,7 @@ class SshParser:
         self.current_host = HostList(['*'])
         self.current_values = KeywordSet()
         self.line_num = 0
-        self.first: bool = True
+        self.first = True
 
     def parse(self, data: str) -> SshConfig:
         for line in data.splitlines():
@@ -230,9 +253,9 @@ class SshParser:
             keyword, value = self.__class__._parse_keyword_line(line)
         except ValueError:
             # not enough values to unpack
-            raise ParserError(f"Invalid syntax at line {self.line_num}: {line}")
+            raise ParserError("Invalid syntax at line {}: {}".format(self.line_num, line))
         if keyword.lower() not in KEYWORD_CASE:
-            raise ParserError(f"Invalid keyword at line {self.line_num}: {keyword}")
+            raise ParserError("Invalid keyword at line {}: {}".format(self.line_num, keyword))
         if keyword not in self.current_values:
             self.current_values[keyword] = value
 
@@ -240,27 +263,6 @@ class SshParser:
     def _parse_keyword_line(line: str) -> Tuple[str, str]:
         k, v = line.split(maxsplit=1)
         return k, v
-
-
-class SshConfig(List[HostBlock]):
-    def get_matching_hosts(self, hostname: str) -> List[HostBlock]:
-        '''
-        Return a list of all HostBlock objects that match hostname.
-        '''
-        return [hb for hb in self if hb.hosts.match(hostname)]
-
-    def get_config_for_host(self, hostname: str) -> Dict[str, str]:
-        '''
-        Return all the configuration keywords that apply to hostname.
-        '''
-        result = KeywordSet()
-        for hostlist, keywords in self:
-            if not hostlist.match(hostname):
-                continue
-            for k, v in keywords.items():
-                if k not in result:
-                    result[k] = v
-        return result
 
 
 def load(data: TextIO) -> SshConfig:
@@ -278,9 +280,9 @@ def _str_generator(ssh_config: SshConfig, indent: str = '    ', sep_lines: int =
             raise TypeError
         hl, kw = hb
         hosts_str = ' '.join(hl)
-        yield f"Host {hosts_str}\n"
+        yield "Host {}\n".format(hosts_str)
         for k, v in kw.items():
-            yield f"{indent}{k} {v}\n"
+            yield "{}{} {}\n".format(indent, k, v)
         if i == last:
             break
         for num in range(sep_lines):

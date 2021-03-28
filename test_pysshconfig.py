@@ -215,7 +215,10 @@ class TestSshParser(unittest.TestCase):
         ssh_config = loads(config)
         ssh_config.append(HostBlock(
             HostList(["myhost.net", "myhost.org"]),
-            KeywordSet({"User": "bob", "Port": "23"}),
+            KeywordSet([
+                ("User", "bob"),
+                ("Port", "23"),
+            ]),
         ))
         self.assertEqual(expected, dumps(ssh_config))
 
