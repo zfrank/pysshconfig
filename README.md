@@ -1,6 +1,7 @@
 # pysshconfig
 
 [![Python package](https://github.com/zfrank/pysshconfig/actions/workflows/python-package.yml/badge.svg)](https://github.com/zfrank/pysshconfig/actions/workflows/python-package.yml)
+[![codecov](https://codecov.io/gh/zfrank/pysshconfig/branch/master/graph/badge.svg?token=PYRHK0K3ZJ)](https://codecov.io/gh/zfrank/pysshconfig)
 
 Extremely simple, pure-python library to read ssh_config files.
 Useful to see what keywords/options are applied to a certain host, just like the
