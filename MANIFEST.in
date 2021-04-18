@@ -1,1 +1,2 @@
 include test_pysshconfig.py
+include CHANGELOG.md
